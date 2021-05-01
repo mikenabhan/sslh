@@ -18,7 +18,7 @@ RUN apk update && \
        libcap-dev
 
 
-ARG SSLH_BUILD_TYPE=select
+ARG SSLH_BUILD_TYPE=fork
 
 RUN git clone https://github.com/yrutschle/sslh.git ./sslh-src \
     && cd ./sslh-src \
