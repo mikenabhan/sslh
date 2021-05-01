@@ -1,140 +1,122 @@
+AUTHOR=riftbit
+NAME=sslh
 
-VERSION=$(shell ./genver.sh -r)
-
-# Configuration -- you probably need to `make clean` if you
-# change any of these
-ENABLE_REGEX=1  # Enable regex probes
-USELIBCONFIG=1	# Use libconfig? (necessary to use configuration files)
-USELIBPCRE=1	# Use libpcre? (needed for regex on musl)
-USELIBWRAP?=	# Use libwrap?
-USELIBCAP=	# Use libcap?
-USESYSTEMD=     # Make use of systemd socket activation
-USELIBBSD?=     # Use libbsd (needed to update process name in `ps`)
-COV_TEST= 	# Perform test coverage?
-PREFIX?=/usr
-BINDIR?=$(PREFIX)/sbin
-MANDIR?=$(PREFIX)/share/man/man8
-
-MAN=sslh.8.gz	# man page name
-
-# End of configuration -- the rest should take care of
-# itself
-
-ifneq ($(strip $(COV_TEST)),)
-    CFLAGS_COV=-fprofile-arcs -ftest-coverage
-endif
-
-CC ?= gcc
-CFLAGS ?=-Wall -g $(CFLAGS_COV)
-
-LIBS=
-OBJS=sslh-conf.o common.o sslh-main.o probe.o tls.o argtable3.o udp-listener.o collection.o gap.o
-
-CONDITIONAL_TARGETS=
-
-ifneq ($(strip $(USELIBWRAP)),)
-	LIBS:=$(LIBS) -lwrap
-	CPPFLAGS+=-DLIBWRAP
-endif
-
-ifneq ($(strip $(ENABLE_REGEX)),)
-	CPPFLAGS+=-DENABLE_REGEX
-endif
-
-ifneq ($(strip $(USELIBPCRE)),)
-	CPPFLAGS+=-DLIBPCRE
-	LIBS:=$(LIBS) -lpcreposix -lpcre
-endif
-
-ifneq ($(strip $(USELIBCONFIG)),)
-	LIBS:=$(LIBS) -lconfig
-	CPPFLAGS+=-DLIBCONFIG
-endif
-
-ifneq ($(strip $(USELIBCAP)),)
-	LIBS:=$(LIBS) -lcap
-	CPPFLAGS+=-DLIBCAP
-endif
-
-ifneq ($(strip $(USESYSTEMD)),)
-        LIBS:=$(LIBS) -lsystemd
-        CPPFLAGS+=-DSYSTEMD
-	CONDITIONAL_TARGETS+=systemd-sslh-generator
-endif
-
-ifneq ($(strip $(USELIBBSD)),)
-        LIBS:=$(LIBS) -lbsd
-        CPPFLAGS+=-DLIBBSD
-endif
+BUILDER_DATE=$(shell date '+%Y-%m-%dT%T%z')
+LABEL_NAME=SSLH Container
+LABEL_DESCRIPTION=SSLH - Applicative Protocol Multiplexer (e.g. share SSH and HTTPS on the same port)
+LABEL_USAGE=https://ergoz.ru/sslh-zapuskaem-ssh-https-openvpn-telegram-na-odnom-443-porty
+LABEL_URL=https://github.com/yrutschle/sslh
+LABEL_VCS_URL=https://github.com/yrutschle/sslh
+LABEL_VCS_REF=$(shell git ls-remote https://github.com/yrutschle/sslh HEAD | cut -c1-7)
+LABEL_VENDOR=Riftbit Studio
+LABEL_VERSION=$(shell curl -s https://raw.githubusercontent.com/yrutschle/sslh/master/ChangeLog | head -1 | awk -F ':' '{print $$1}')
+LABEL_DOCKER_CMD=docker run --name sslh -d --env SSLH_OPTS='-p0.0.0.0:443 --anyprot192.168.0.1:8443' --net host --privileged --restart always riftbit/sslh
+LABEL_DOCKER_PARAMS=SSLH_OPTS=start options to sslh
+LABEL_MAINTAINER=Riftbit ErgoZ <github.com/riftbit>
 
 
-all: sslh $(MAN) echosrv $(CONDITIONAL_TARGETS)
+BUILD_LABEL_OPTS=--build-arg BUILD_DATE="$(BUILDER_DATE)" --build-arg LABEL_NAME="$(LABEL_NAME)" --build-arg LABEL_DESCRIPTION="$(LABEL_DESCRIPTION)" --build-arg LABEL_USAGE="$(LABEL_USAGE)" --build-arg LABEL_URL="$(LABEL_URL)" --build-arg LABEL_VCS_URL="$(LABEL_VCS_URL)"  --build-arg LABEL_VCS_REF="$(LABEL_VCS_REF)" --build-arg LABEL_VENDOR="$(LABEL_VENDOR)" --build-arg LABEL_VERSION="$(LABEL_VERSION)" --build-arg LABEL_DOCKER_CMD="$(LABEL_DOCKER_CMD)" --build-arg LABEL_DOCKER_PARAMS="$(LABEL_DOCKER_PARAMS)" --build-arg LABEL_MAINTAINER="$(LABEL_MAINTAINER)"
 
-.c.o: *.h version.h
-	$(CC) $(CFLAGS) $(CPPFLAGS) -c $<
+DB=docker build --no-cache
+DT=docker tag
+DP=docker push
 
-version.h:
-	./genver.sh >version.h
+.PHONY: all build tag release
 
-sslh: sslh-fork sslh-select
+all: release
 
-$(OBJS): version.h common.h collection.h sslh-conf.h gap.h
 
-sslh-conf.c: sslhconf.cfg
-	conf2struct sslhconf.cfg
+build: build-debian build-alpine
 
-sslh-fork: version.h $(OBJS) sslh-fork.o Makefile
-	$(CC) $(CFLAGS) $(LDFLAGS) -o sslh-fork sslh-fork.o $(OBJS) $(LIBS)
-	#strip sslh-fork
+build-debian: build-debian-fork build-debian-select
 
-sslh-select: version.h $(OBJS) sslh-select.o Makefile
-	$(CC) $(CFLAGS) $(LDFLAGS) -o sslh-select sslh-select.o $(OBJS) $(LIBS)
-	#strip sslh-select
+build-alpine: build-alpine-fork build-alpine-select
 
-systemd-sslh-generator: systemd-sslh-generator.o
-	$(CC) $(CFLAGS) $(LDFLAGS) -o systemd-sslh-generator systemd-sslh-generator.o -lconfig
 
-echosrv: version.h $(OBJS) echosrv.o
-	$(CC) $(CFLAGS) $(LDFLAGS) -o echosrv echosrv.o sslh-conf.o probe.o common.o tls.o argtable3.o $(LIBS)
 
-$(MAN): sslh.pod Makefile
-	pod2man --section=8 --release=$(VERSION) --center=" " sslh.pod | gzip -9 - > $(MAN)
+build-debian-fork:
+	$(info === Build SSLH Debian Docker image for "FORK" type ===)
+	$(DB) \
+	--build-arg SSLH_BUILD_TYPE=fork $(BUILD_LABEL_OPTS) \
+	-t $(AUTHOR)/$(NAME):debian-fork-$(LABEL_VCS_REF) \
+	-f debian.Dockerfile .
 
-# Create release: export clean tree and tag current
-# configuration
-release:
-	git archive master --prefix="sslh-$(VERSION)/" | gzip > /tmp/sslh-$(VERSION).tar.gz
-	gpg --detach-sign --armor /tmp/sslh-$(VERSION).tar.gz
+build-debian-select:
+	$(info === Build SSLH Debian Docker image for "SELECT" type ===)
+	$(DB) \
+	--build-arg SSLH_BUILD_TYPE=select $(BUILD_LABEL_OPTS) \
+	-t $(AUTHOR)/$(NAME):debian-select-$(LABEL_VCS_REF) \
+	-f debian.Dockerfile .
 
-# generic install: install binary and man page
-install: sslh $(MAN)
-	mkdir -p $(DESTDIR)/$(BINDIR)
-	mkdir -p $(DESTDIR)/$(MANDIR)
-	install -p sslh-fork $(DESTDIR)/$(BINDIR)/sslh
-	install -p -m 0644 $(MAN) $(DESTDIR)/$(MANDIR)/$(MAN)
+build-alpine-fork:
+	$(info === Build SSLH Alpine Linux Docker image for "FORK" type ===)
+	$(DB) \
+	--build-arg SSLH_BUILD_TYPE=fork $(BUILD_LABEL_OPTS) \
+	-t $(AUTHOR)/$(NAME):alpine-fork-$(LABEL_VCS_REF) \
+	-f alpine.Dockerfile .
 
-# "extended" install for Debian: install startup script
-install-debian: install sslh $(MAN)
-	sed -e "s+^PREFIX=+PREFIX=$(PREFIX)+" scripts/etc.init.d.sslh > /etc/init.d/sslh
-	chmod 755 /etc/init.d/sslh
-	update-rc.d sslh defaults
+build-alpine-select:
+	$(info === Build SSLH Alpine Linux Docker image for "SELECT" type ===)
+	$(DB) \
+	--build-arg SSLH_BUILD_TYPE=select $(BUILD_LABEL_OPTS) \
+	-t $(AUTHOR)/$(NAME):alpine-select-$(LABEL_VCS_REF) \
+	-f alpine.Dockerfile .
 
-uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/sslh $(DESTDIR)$(MANDIR)/$(MAN) $(DESTDIR)/etc/init.d/sslh $(DESTDIR)/etc/default/sslh
-	update-rc.d sslh remove
 
-distclean: clean
-	rm -f tags sslh-conf.[ch] echosrv-conf.[ch] cscope.*
+tag: tag-fork tag-select tag-latest
 
-clean:
-	rm -f sslh-fork sslh-select echosrv version.h $(MAN) systemd-sslh-generator *.o *.gcov *.gcno *.gcda *.png *.html *.css *.info
+tag-fork: tag-debian-fork tag-alpine-fork
 
-tags:
-	ctags --globals -T *.[ch]
+tag-select: tag-debian-select tag-alpine-select
 
-cscope:
-	-find . -name "*.[chS]" >cscope.files
-	-cscope -b -R
 
-test:
-	./t
+
+tag-debian-fork: build-debian-fork
+	$(info === $@ ===)
+	$(DT) $(AUTHOR)/$(NAME):debian-fork-$(LABEL_VCS_REF) $(AUTHOR)/$(NAME):debian-fork
+
+tag-debian-select: build-debian-select
+	$(info === $@ ===)
+	$(DT) $(AUTHOR)/$(NAME):debian-select-$(LABEL_VCS_REF) $(AUTHOR)/$(NAME):debian-select
+
+tag-alpine-fork: build-alpine-fork
+	$(info === $@ ===)
+	$(DT) $(AUTHOR)/$(NAME):alpine-fork-$(LABEL_VCS_REF) $(AUTHOR)/$(NAME):alpine-fork
+
+tag-alpine-select: build-alpine-select
+	$(info === $@ ===)
+	$(DT) $(AUTHOR)/$(NAME):alpine-select-$(LABEL_VCS_REF) $(AUTHOR)/$(NAME):alpine-select
+
+tag-latest: build-debian-select
+	$(info === $@ ===)
+	$(DT) $(AUTHOR)/$(NAME):debian-select-$(LABEL_VCS_REF) $(AUTHOR)/$(NAME):latest
+
+
+
+release: release-fork release-select release-latest
+
+release-fork: release-debian-fork release-alpine-fork
+
+release-select: release-debian-select release-alpine-select
+
+
+
+release-debian-fork: tag-debian-fork
+	$(info === $@ ===)
+	$(DP) $(AUTHOR)/$(NAME):debian-fork
+
+release-debian-select: tag-debian-select
+	$(info === $@ ===)
+	$(DP) $(AUTHOR)/$(NAME):debian-select
+
+release-alpine-fork: tag-alpine-fork
+	$(info === $@ ===)
+	$(DP) $(AUTHOR)/$(NAME):alpine-fork
+
+release-alpine-select: tag-alpine-select
+	$(info === $@ ===)
+	$(DP) $(AUTHOR)/$(NAME):alpine-select
+
+release-latest: tag-latest
+	$(info === $@ ===)
+	$(DP) $(AUTHOR)/$(NAME):latest
